@@ -1,9 +1,10 @@
 (ns gapi.core
   (:require
-   [clojure.data.json :as json]
    [clj-http.client :as http]
-   [clj-http.util :refer [url-encode]]
    [clojure.string :as string]
+
+   [cheshire.core :as json]
+   [clj-http.util :refer [url-encode]]
    [gapi.auth :as auth]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -25,9 +26,9 @@
 (defn list-apis
   "Directly eturn a list of APIs available to built, and endpoint discovery document URLs."
   []
-  (let [discovery-doc (json/read-json ((http/get discovery_url) :body))]
-    (map #(vector (%1 :name) (%1 :version) (%1 :discoveryRestUrl))
-      (filter #(= (%1 :preferred) true) (discovery-doc :items)))))
+  (let [discovery-doc (json/parse-string ((http/get discovery_url) :body) true)]
+    (map #(vector (:name %1) (:version %1) (:discoveryRestUrl %1))
+      (filter #(= (:preferred %1) true) (:items discovery-doc)))))
 
 (defn build-resource [base r]
   (reduce
@@ -40,11 +41,11 @@
 
 (defn build
   "Given a discovery document URL, construct an map of names to functions that
-	will make the various calls against the resources. Each call accepts a gapi.auth
-	state map, and list of argument values, an in some cases a JSON encoded body to send
-	(for write calls)"
+   will make the various calls against the resources. Each call accepts a gapi.auth
+   state map, and list of argument values, an in some cases a JSON encoded body to send
+   (for write calls)"
   [api_url]
-  (let [r (json/read-json ((http/get api_url) :body))]
+  (let [r (json/parse-string ((http/get api_url) :body) true)]
     (build-resource (:baseUrl r) r)))
 
 (defn list-methods
@@ -74,8 +75,7 @@
 (defn im
   "Call a service, constructing if necessary"
   ([auth method_name & args]
-   (let [
-         service_name (first (clojure.string/split method_name #"[\.\/]"))
+   (let [service_name (first (clojure.string/split method_name #"[\.\/]"))
          api (last (filter #(= (first %1) service_name) (m-list-apis)))
          service (m-build (last api))]
      (apply call auth service method_name args))))
@@ -90,7 +90,7 @@
   ([api_url]
    (api-ns nil api_url))
   ([auth api_url]
-   (let [	service (m-build api_url)
+   (let [service (m-build api_url)
          build-fn (partial build-ns auth)]
      (map build-fn service))))
 
@@ -101,13 +101,13 @@
 (defn- build-ns
   "Create an entry in a namespace for the method"
   [auth [mname method]]
-  (let [	name (str "gapi." mname)
+  (let [name (str "gapi." mname)
         parts (clojure.string/split name #"[\.\/]")
         namespace (symbol (clojure.string/join "." (pop parts)))]
     (if (= nil (find-ns namespace)) (create-ns namespace))
     (intern namespace
-      (with-meta (symbol (last parts)) {:doc (method :doc) :arglists (method :arglists)})
-      (partial (method :fn) auth))
+      (with-meta (symbol (last parts)) {:doc (:doc method) :arglists (:arglists method)})
+      (partial (:fn method) auth))
     name))
 
 (defn- get-method-name
@@ -125,12 +125,12 @@
 (defn- get-path-params
   "Return a vector of parameter names which appear in the URL path"
   [params]
-  (match-params params (fn [p] (= "path" (p :location)))))
+  (match-params params (fn [p] (= "path" (:location p)))))
 
 (defn- get-required-params
   "Return a vector of required parameter names"
   [params]
-  (match-params params (fn [p] (p :required))))
+  (match-params params (fn [p] (:required p))))
 
 (defn- hasreqs?
   "Determine whether the required params are present in the arguments"
@@ -140,10 +140,10 @@
 (defn- get-response
   "Check an HTTP response, JSON decoding the body if valid"
   [res]
-  (let [acceptable-responses #{200 204}]
-    (if (acceptable-responses (res :status))
-      (json/read-str (or (res :body) "{}"))
-      (let [body (json/read-str (res :body) :key-fn keyword)]
+  (let [acceptable-responses #{200 201 204}]
+    (if (acceptable-responses (:status res))
+      (json/parse-string (:body res) true)
+      (let [body (json/parse-string (:body res) true)]
         {:error (-> body :error :message)}))))
 
 (defn- get-url
@@ -170,7 +170,7 @@
        {:pre [(hasreqs? method_params args)]}
        (let [url (get-url base_url path (get-path-params method_params) args)
              params (auth/call-params state {:throw-exceptions false
-                                             :body (json/json-str body)
+                                             :body (json/generate-string body)
                                              :content-type :json
                                              :query-params args})]
          (get-response (http/post url params))))))
@@ -190,7 +190,7 @@
        {:pre [(hasreqs? method_params args)]}
        (let [url (get-url base_url path (get-path-params method_params) args)
              params (auth/call-params state {:throw-exceptions false
-                                             :body (json/json-str body)
+                                             :body (json/generate-string body)
                                              :content-type :json
                                              :query-params args})]
          (get-response (http/put url params))))))
@@ -200,7 +200,7 @@
        {:pre [(hasreqs? method_params args)]}
        (let [url (get-url base_url path (get-path-params method_params) args)
              params (auth/call-params state {:throw-exceptions false
-                                             :body (json/json-str body)
+                                             :body (json/generate-string body)
                                              :content-type :json
                                              :query-params args})]
          (get-response (http/patch url params))))))
@@ -208,15 +208,17 @@
 (defn- docstring
   "Return a description for this method"
   [method]
-  (str (method :description) "\n"
-    "Required parameters: " (string/join " "(get-required-params (method :parameters)))
+  (str (:description method) "\n"
+    "Required parameters: " (string/join " "(get-required-params (:parameters method)))
     "\n"))
 
 (defn- arglists
   "Return an argument list for the method"
   [method]
   (let [base_args
-        (if (= (method :description) "POST") '[auth parameters body] '[auth parameters])]
+        (if (= (:description method) "POST")
+          '[auth parameters body]
+          '[auth parameters])]
     base_args))
 
 (defn- extract-methods
@@ -225,9 +227,9 @@
   (reduce
     (fn [methods [key method]]
       (assoc methods
-        (get-method-name (method :id))
+        (get-method-name (:id method))
         {:fn (callfn base_url method)
          :doc (docstring method)
          :arglists (arglists method)
-         :scopes (method :scopes)}))
-    {} (resource :methods)))
+         :scopes (:scopes method)}))
+    {} (:methods resource)))
