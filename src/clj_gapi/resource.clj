@@ -1,19 +1,20 @@
-(ns gapi.resource
+(ns clj-gapi.resource
   (:require
    [clj-http.client :as http]
    [clojure.string :as string]
 
    [cheshire.core :as json]
 
-   [gapi.params :as params]
-   [gapi.api :as api]))
+   [clj-gapi.params :as params]
+   [clj-gapi.api :as api]))
 
 (defn docstring
   "Return a description for this method"
   [method]
-  (str (:description method) "\n"
-    "Required parameters: " (string/join " "(params/get-required-params (:parameters method)))
-    "\n"))
+  (let [required (params/get-required-params (:parameters method))]
+    (str (:description method) "\n"
+      "Required parameters: " (string/join " " required)
+      "\n")))
 
 (defn get-method-name
   "Get a friendly namespace-esque string for the method"
@@ -25,9 +26,9 @@
   "Return an argument list for the method"
   [method]
   (let [base_args
-        (if (= (:description method) "POST")
-          '[auth parameters body]
-          '[auth parameters])]
+        (if (= (:httpMethod method) "POST")
+          '[[auth parameters body]]
+          '[[auth parameters]])]
     base_args))
 
 (defn extract-methods
@@ -41,13 +42,14 @@
          :doc (docstring method)
          :arglists (arglists method)
          :scopes (:scopes method)}))
-    {} (:methods resource)))
+    {}
+    (:methods resource)))
 
-(defn build-resource [base r]
+(defn build [base r]
   (reduce
     (fn [methods [key resource]]
       (merge methods
         (extract-methods base resource)
-        (build-resource base resource)))
+        (build base resource)))
     {}
     (:resources r)))
