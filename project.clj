@@ -1,4 +1,4 @@
-(defproject clj-gapi "1.0.3"
+(defproject org.clojars.cwyckoff/clj-gapi "1.0.3"
   :description "A simple pure clojure interface for Google web services"
   :license {:name "The Apache Software License, Version 2.0"
             :url "http://www.apache.org/licenses/LICENSE-2.0"}
