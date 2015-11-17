@@ -1,11 +1,10 @@
 (ns clj-gapi.auth
-  (:require
-   [clojure.string :as string]
+  (:require [clojure.string :as string]
 
-   [clj-http.client :as http]
-   [cheshire.core :as json]
+            [clj-http.client :as http]
+            [cheshire.core :as json]
 
-   [clj-gapi.params :as params]))
+            [clj-gapi.params :as params]))
 
 (def auth-url "https://accounts.google.com/o/oauth2/auth")
 (def token-url "https://accounts.google.com/o/oauth2/token")
@@ -38,10 +37,10 @@
     (string/join "&" (params/encode-params params))))
 
 (defn encode-refresh-token-params [auth]
-  (let [{:keys [client-id client-secret refresh]} auth
+  (let [{:keys [client-id client-secret refresh-token]} auth
         params {"client_id" client-id
                 "client_secret" client-secret
-                "refresh_token" refresh
+                "refresh_token" refresh-token
                 "grant_type" "refresh_token"}]
     (string/join "&" (params/encode-params params))))
 
@@ -125,13 +124,13 @@
   (if (= (:state auth) checkstate)
     (let [params (encode-exchange-token-params auth code)
           {:keys [access_token refresh_token expires_in]} (post-token params)]
-      (assoc auth :token access_token :exchange-status :success :refresh refresh_token :expires (expires expires_in)))
+      (assoc auth :token access_token :exchange-status :success :refresh-token refresh_token :expires (expires expires_in)))
     (assoc auth :exchange-status :fail)))
 
 (defn refresh-token
   "Generate a new authentication token using the refresh token"
   [auth]
-  (if (:refresh auth)
+  (if (:refresh-token auth)
     (let [params (encode-refresh-token-params auth)
           {:keys [expires_in access_token]} (post-token params)]
       (assoc auth :token access_token :expires (expires expires_in)))
